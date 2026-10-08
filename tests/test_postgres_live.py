@@ -241,3 +241,102 @@ async def test_postgres_live_task_engine() -> None:
         del_u = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
         await session.delete(del_u)
         await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_postgres_live_phases_4_5_6() -> None:
+    """Verify Schedules, Reminders, Notifications, Projects, and Goals on live PostgreSQL 17."""
+    from app.schemas.goal import GoalCreate, GoalMilestoneCreate, GoalMilestoneUpdate
+    from app.schemas.project import ProjectCreate
+    from app.schemas.reminder import ReminderCreate
+    from app.schemas.schedule import ScheduleCreate
+    from app.services.goal_service import GoalService
+    from app.services.notification_service import NotificationService
+    from app.services.project_service import ProjectService
+    from app.services.reminder_service import ReminderService
+    from app.services.schedule_service import ScheduleService
+
+    sessionmaker = get_live_postgres_sessionmaker()
+    async with sessionmaker() as session:
+        # 1. Create User
+        user = User(
+            email="pg_test_full_user@example.com",
+            display_name="PG Full Phases User",
+            password_hash=hash_password("Pass123!"),
+            timezone="UTC",
+        )
+        session.add(user)
+        await session.commit()
+        user_id = user.id
+
+        # 2. Project
+        p_svc = ProjectService(session)
+        project = await p_svc.create_project(
+            user_id=user_id,
+            data=ProjectCreate(name="Live PG Project", priority=ProjectPriority.HIGH),
+        )
+        assert project.name == "Live PG Project"
+
+        # 3. Schedule
+        s_svc = ScheduleService(session)
+        start = datetime.now(UTC) + timedelta(hours=2)
+        end = start + timedelta(hours=1)
+        schedule = await s_svc.create_schedule(
+            user_id=user_id,
+            data=ScheduleCreate(
+                title="Live PG Schedule",
+                start_at=start,
+                end_at=end,
+            ),
+        )
+        assert schedule.title == "Live PG Schedule"
+
+        # 4. Reminder & Notification
+        r_svc = ReminderService(session)
+        remind_at = datetime.now(UTC) + timedelta(hours=1)
+        reminder = await r_svc.create_reminder(
+            user_id=user_id,
+            data=ReminderCreate(
+                schedule_id=schedule.id,
+                remind_at=remind_at,
+            ),
+        )
+        assert reminder.schedule_id == schedule.id
+
+        # Trigger reminder
+        await r_svc.trigger_reminder(reminder.id)
+
+        # Check notification
+        n_svc = NotificationService(session)
+        notifs = await n_svc.list_notifications(user_id=user_id)
+        assert notifs.total == 1
+        assert "Live PG Schedule" in notifs.items[0].title
+
+        # 5. Goal & Milestone
+        g_svc = GoalService(session)
+        goal = await g_svc.create_goal(
+            user_id=user_id,
+            data=GoalCreate(title="Live PG Goal", progress=25),
+        )
+        assert goal.progress == 25
+
+        milestone = await g_svc.create_milestone(
+            goal_id=goal.id,
+            user_id=user_id,
+            data=GoalMilestoneCreate(title="Live Milestone 1", position=1),
+        )
+        assert milestone.title == "Live Milestone 1"
+
+        milestone_done = await g_svc.update_milestone(
+            goal_id=goal.id,
+            milestone_id=milestone.id,
+            user_id=user_id,
+            data=GoalMilestoneUpdate(is_completed=True),
+        )
+        assert milestone_done.is_completed is True
+        assert milestone_done.completed_at is not None
+
+        # Clean up user (cascades all owned items)
+        del_u = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
+        await session.delete(del_u)
+        await session.commit()

@@ -10,6 +10,7 @@ from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import logger, setup_logging
+from app.core.scheduler import app_scheduler
 
 settings = get_settings()
 setup_logging(log_level=settings.LOG_LEVEL)
@@ -19,8 +20,17 @@ setup_logging(log_level=settings.LOG_LEVEL)
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Application lifespan context manager."""
     logger.info(f"Starting {settings.APP_NAME} in [{settings.APP_ENV}] mode...")
+    app_scheduler.start()
+    try:
+        from app.services.reminder_service import ReminderService
+
+        rebuilt = await ReminderService.rebuild_all_pending_reminders()
+        logger.info(f"Rebuilt {rebuilt} pending reminder scheduler jobs from PostgreSQL.")
+    except Exception as e:
+        logger.warning(f"Could not rebuild scheduler jobs on startup: {e}")
     yield
     logger.info(f"Shutting down {settings.APP_NAME}...")
+    app_scheduler.shutdown(wait=False)
 
 
 def create_application() -> FastAPI:
