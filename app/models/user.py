@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from app.models.reminder import Reminder
     from app.models.review import DailyReview, WeeklyReview
     from app.models.schedule import Schedule
+    from app.models.session import UserSession
     from app.models.task import Task
 
 
@@ -37,6 +38,11 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         default="Asia/Kolkata",
         nullable=False,
     )
+    password_hash: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        default="",
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         default=True,
@@ -44,6 +50,11 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     # Relationships
+    sessions: Mapped[list["UserSession"]] = relationship(
+        "UserSession",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     projects: Mapped[list["Project"]] = relationship(
         "Project",
         back_populates="user",

@@ -1,10 +1,11 @@
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.core.database import AsyncSessionLocal
+from app.core.security import hash_password, hash_session_token, verify_password
 from app.models import (
     Activity,
     ActivityAction,
@@ -18,6 +19,7 @@ from app.models import (
     TaskPriority,
     TaskStatus,
     User,
+    UserSession,
 )
 
 
@@ -29,22 +31,43 @@ async def test_postgres_native_types_and_constraints() -> None:
         await session.execute(text("DELETE FROM users WHERE email LIKE 'pg_test_%'"))
         await session.commit()
 
-        # 2. Test User with UUID and Timezone
+        # 2. Test User with UUID, Timezone, and Argon2id hash
+        hashed_pw = hash_password("PostgresPassword123")
         user = User(
             email="pg_test_user@example.com",
             display_name="PG Test User",
+            password_hash=hashed_pw,
             timezone="Asia/Kolkata",
         )
         session.add(user)
         await session.commit()
         user_id = user.id
 
-        # Query user back to verify timezone
+        # Query user back to verify timezone and password verification
         stmt_u = select(User).where(User.id == user_id)
         user_res = (await session.execute(stmt_u)).scalar_one()
         assert user_res.created_at.tzinfo is not None
+        assert verify_password("PostgresPassword123", user_res.password_hash)
 
-        # 3. Test Goal Check Constraint (0 <= progress <= 100)
+        # 3. Test Session persistence in PostgreSQL 17
+        token_hash = hash_session_token("pg_random_raw_session_token_123")
+        user_session = UserSession(
+            user_id=user_id,
+            session_token_hash=token_hash,
+            expires_at=datetime.now(UTC) + timedelta(days=7),
+            user_agent="PostgresIntegrationTest/1.0",
+            ip_address="127.0.0.1",
+        )
+        session.add(user_session)
+        await session.commit()
+
+        stmt_s = select(UserSession).where(UserSession.session_token_hash == token_hash)
+        res_s = await session.execute(stmt_s)
+        fetched_s = res_s.scalar_one()
+        assert fetched_s.user_id == user_id
+        assert fetched_s.is_revoked is False
+
+        # 4. Test Goal Check Constraint (0 <= progress <= 100)
         goal_valid = Goal(
             user_id=user_id,
             title="Valid Goal",
@@ -66,7 +89,7 @@ async def test_postgres_native_types_and_constraints() -> None:
             await session.commit()
         await session.rollback()
 
-        # 4. Test Activity with native JSONB column
+        # 5. Test Activity with native JSONB column
         activity = Activity(
             user_id=user_id,
             entity_type="GOAL",
@@ -88,7 +111,7 @@ async def test_postgres_native_types_and_constraints() -> None:
         assert fetched_act.metadata_["changes"]["progress"]["new"] == 50
         assert fetched_act.metadata_["boolean_flag"] is True
 
-        # 5. Test Project -> Task Set Null on Project Delete
+        # 6. Test Project -> Task Set Null on Project Delete
         project = Project(
             user_id=user_id,
             name="PG Project",
@@ -124,7 +147,7 @@ async def test_postgres_native_types_and_constraints() -> None:
         t_after = res_t.scalar_one()
         assert t_after.project_id is None
 
-        # 6. Test Daily Review Unique Constraint
+        # 7. Test Daily Review Unique Constraint
         daily = DailyReview(
             user_id=user_id,
             review_date=date(2026, 10, 8),
@@ -143,7 +166,7 @@ async def test_postgres_native_types_and_constraints() -> None:
             await session.commit()
         await session.rollback()
 
-        # 7. Clean up test user (will CASCADE delete all associated rows)
+        # 8. Clean up test user (will CASCADE delete sessions, activities, tasks, goals)
         del_stmt = select(User).where(User.id == user_id)
         u_to_delete = (await session.execute(del_stmt)).scalar_one_or_none()
         if u_to_delete:

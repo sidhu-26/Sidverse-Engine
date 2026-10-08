@@ -22,13 +22,22 @@ Router  ──►  Service  ──►  Repository  ──►  Database (Async SQ
 - Containerization with Docker & Docker Compose
 - Testing foundation with `pytest` and `httpx`
 
-**Phase 1** establishes the PostgreSQL database architecture:
+**Phase 1** established the PostgreSQL database architecture:
 - 13 SQLAlchemy 2.x async models with UUID primary keys and timezone-aware timestamps
 - Domain separation across projects, tasks, goals, duties, recurrence rules, schedules, reminders, notifications, activities, and reviews
 - Soft-delete strategy using `deleted_at` on domain entities
 - Database constraints and indexed foreign key relationships
 - Initial Alembic migration `0001_initial_schema.py`
 - Comprehensive database, relationship, and migration lifecycle test suites
+
+**Phase 2** establishes the Authentication & Session subsystem:
+- Argon2id password hashing via `argon2-cffi`
+- Server-side PostgreSQL session management (`user_sessions` table)
+- Secure HttpOnly session cookie authentication with SameSite protection
+- Password strength validation and case/whitespace email normalization
+- Protected route dependency `get_current_user`
+- Alembic migration `0002_authentication.py` extending `users` and adding `user_sessions`
+- Auth endpoints: `/api/auth/register`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/me`
 
 ---
 
@@ -122,12 +131,16 @@ Once the application is running, access the interactive API docs:
 - **ReDoc**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
 - **OpenAPI Schema**: [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json)
 
-### Available Endpoints (Phase 0)
+### Available Endpoints
 
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/api/health` | Application health check (`{"status": "ok"}`) |
 | `GET` | `/api/health/db` | Database connectivity health check (`{"status": "ok", "database": "connected"}`) |
+| `POST` | `/api/auth/register` | User registration with Argon2id password hashing |
+| `POST` | `/api/auth/login` | User login establishing a secure session |
+| `POST` | `/api/auth/logout` | Session revocation and cookie clearing |
+| `GET` | `/api/auth/me` | Protected route returning current user profile |
 
 ---
 

@@ -24,6 +24,7 @@ from app.models.recurrence import RecurrenceRule
 from app.models.reminder import Reminder
 from app.models.review import DailyReview, WeeklyReview
 from app.models.schedule import Schedule
+from app.models.session import UserSession
 from app.models.task import Task
 from app.models.user import User
 
@@ -47,6 +48,7 @@ __all__ = [
     "ActivityAction",
     # Models
     "User",
+    "UserSession",
     "Project",
     "Task",
     "Goal",

@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] | str = ["http://localhost:3000"]
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
+    # Authentication & Session Settings
+    SESSION_SECRET_KEY: str = "development-insecure-secret-key-change-in-production"
+    SESSION_COOKIE_NAME: str = "sid_session"
+    SESSION_EXPIRE_SECONDS: int = 60 * 60 * 24 * 7  # 7 days
+    SESSION_COOKIE_SECURE: bool = False
+    SESSION_COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax"
+
     @field_validator("CORS_ORIGINS", mode="after")
     @classmethod
     def assemble_cors_origins(cls, v: str | list[str]) -> list[str]:
