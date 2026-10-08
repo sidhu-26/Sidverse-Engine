@@ -1,10 +1,11 @@
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import NullPool, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.database import AsyncSessionLocal
+from app.core.config import get_settings
 from app.core.security import hash_password, hash_session_token, verify_password
 from app.models import (
     Activity,
@@ -23,10 +24,18 @@ from app.models import (
 )
 
 
+def get_live_postgres_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    """Create a sessionmaker with NullPool for isolated async event loops."""
+    settings = get_settings()
+    engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
+    return async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+
+
 @pytest.mark.asyncio
 async def test_postgres_native_types_and_constraints() -> None:
     """Verify that PostgreSQL 17 handles UUID, TIMESTAMPTZ, JSONB, and constraints natively."""
-    async with AsyncSessionLocal() as session:
+    sessionmaker = get_live_postgres_sessionmaker()
+    async with sessionmaker() as session:
         # 1. Clean up any leftover test data
         await session.execute(text("DELETE FROM users WHERE email LIKE 'pg_test_%'"))
         await session.commit()
@@ -172,3 +181,63 @@ async def test_postgres_native_types_and_constraints() -> None:
         if u_to_delete:
             await session.delete(u_to_delete)
             await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_postgres_live_task_engine() -> None:
+    """Verify Task Engine service and repository logic on live PostgreSQL 17."""
+    from app.schemas.task import TaskCreate, TaskUpdate
+    from app.services.task_service import TaskService
+
+    sessionmaker = get_live_postgres_sessionmaker()
+    async with sessionmaker() as session:
+        # Create user
+        user = User(
+            email="pg_test_tasks_user@example.com",
+            display_name="PG Task User",
+            password_hash=hash_password("Pass123!"),
+            timezone="UTC",
+        )
+        session.add(user)
+        await session.commit()
+        user_id = user.id
+
+        service = TaskService(session)
+
+        # 1. Create Task
+        created = await service.create_task(
+            user_id=user_id,
+            data=TaskCreate(
+                title="PostgreSQL Native Task",
+                description="Testing native PG operations",
+                priority=TaskPriority.HIGH,
+                due_at=datetime.now(UTC) + timedelta(days=1),
+                estimated_minutes=30,
+            ),
+        )
+        assert created.title == "PostgreSQL Native Task"
+        assert created.status == TaskStatus.TODO
+
+        # 2. Update to COMPLETED
+        completed = await service.update_task(
+            task_id=created.id,
+            user_id=user_id,
+            data=TaskUpdate(status=TaskStatus.COMPLETED),
+        )
+        assert completed.status == TaskStatus.COMPLETED
+        assert completed.completed_at is not None
+
+        # 3. Soft Delete
+        await service.delete_task(task_id=created.id, user_id=user_id)
+
+        # Verify activity was recorded in native JSONB activities table
+        stmt_act = select(Activity).where(
+            Activity.user_id == user_id, Activity.entity_id == created.id
+        )
+        acts = list((await session.execute(stmt_act)).scalars().all())
+        assert len(acts) == 3  # CREATED, COMPLETED, DELETED
+
+        # Clean up
+        del_u = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
+        await session.delete(del_u)
+        await session.commit()
