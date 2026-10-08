@@ -340,3 +340,66 @@ async def test_postgres_live_phases_4_5_6() -> None:
         del_u = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
         await session.delete(del_u)
         await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_postgres_live_phase_7() -> None:
+    """Live Postgres 17 test for Phase 7 (History, Daily Reviews, Weekly Reviews)."""
+    from app.schemas.review import DailyReviewCreate, WeeklyReviewCreate
+    from app.schemas.task import TaskCreate, TaskUpdate
+    from app.services.history_service import HistoryService
+    from app.services.review_service import ReviewService
+    from app.services.task_service import TaskService
+
+    sessionmaker = get_live_postgres_sessionmaker()
+    async with sessionmaker() as session:
+        # Create user
+        user = User(
+            email="pg_phase7_user@example.com",
+            display_name="PG Phase 7 User",
+            password_hash=hash_password("Password123!"),
+            timezone="Asia/Kolkata",
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        user_id = user.id
+
+        # 1. Create task, complete it, reschedule another
+        t_svc = TaskService(session)
+        t1 = await t_svc.create_task(user_id=user_id, data=TaskCreate(title="Phase 7 Live Task 1"))
+        await t_svc.update_task(
+            task_id=t1.id, user_id=user_id, data=TaskUpdate(status=TaskStatus.COMPLETED)
+        )
+
+        t2 = await t_svc.create_task(user_id=user_id, data=TaskCreate(title="Phase 7 Live Task 2"))
+        new_due = datetime.now(UTC) + timedelta(days=3)
+        await t_svc.update_task(task_id=t2.id, user_id=user_id, data=TaskUpdate(due_at=new_due))
+
+        # 2. History verification
+        h_svc = HistoryService(session)
+        hist = await h_svc.list_history(user_id=user_id)
+        assert hist.total >= 4
+
+        # 3. Daily Review
+        r_svc = ReviewService(session)
+        today = date.today()
+        d_rev = await r_svc.create_or_upsert_daily_review(
+            user=user,
+            payload=DailyReviewCreate(review_date=today, notes="Live Daily Review Notes"),
+        )
+        assert d_rev.completed_tasks >= 1
+        assert d_rev.notes == "Live Daily Review Notes"
+
+        # 4. Weekly Review
+        w_rev = await r_svc.create_or_upsert_weekly_review(
+            user=user,
+            payload=WeeklyReviewCreate(week_start=today, notes="Live Weekly Review Notes"),
+        )
+        assert w_rev.completed_tasks >= 1
+        assert w_rev.notes == "Live Weekly Review Notes"
+
+        # Cleanup
+        del_u = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
+        await session.delete(del_u)
+        await session.commit()
