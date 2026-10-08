@@ -12,7 +12,7 @@
 Router  ──►  Service  ──►  Repository  ──►  Database (Async SQLAlchemy 2.x / PostgreSQL)
 ```
 
-**Phase 0** establishes the backend foundation:
+**Phase 0** established the backend foundation:
 - FastAPI async application initialization with lifespan management
 - Centralized configuration via `pydantic-settings`
 - Async database connection pool and declarative base
@@ -21,6 +21,14 @@ Router  ──►  Service  ──►  Repository  ──►  Database (Async SQ
 - Health checks for application (`/api/health`) and database connectivity (`/api/health/db`)
 - Containerization with Docker & Docker Compose
 - Testing foundation with `pytest` and `httpx`
+
+**Phase 1** establishes the PostgreSQL database architecture:
+- 13 SQLAlchemy 2.x async models with UUID primary keys and timezone-aware timestamps
+- Domain separation across projects, tasks, goals, duties, recurrence rules, schedules, reminders, notifications, activities, and reviews
+- Soft-delete strategy using `deleted_at` on domain entities
+- Database constraints and indexed foreign key relationships
+- Initial Alembic migration `0001_initial_schema.py`
+- Comprehensive database, relationship, and migration lifecycle test suites
 
 ---
 
